@@ -229,6 +229,84 @@ function simplify(expr: Equation | Expression): Equation | Expression {
             }
         }
 
+        // Handle distribution law: a * (b + c) = a*b + a*c and (b + c) * a = b*a + c*a
+        if (binExpr.operator === "*") {
+            // Pattern: num * (expr + expr2) = num*expr + num*expr2
+            if (left.type === "NumberLiteral" && right.type === "BinaryExpression") {
+                const rightBin = right as BinaryExpression;
+                if (rightBin.operator === "+" || rightBin.operator === "-") {
+                    const coefficient = (left as NumberLiteral).value;
+                    const leftPart = {
+                        type: "BinaryExpression",
+                        operator: "*",
+                        left: left,
+                        right: rightBin.left
+                    } as BinaryExpression;
+                    const rightPart = {
+                        type: "BinaryExpression",
+                        operator: "*",
+                        left: left,
+                        right: rightBin.right
+                    } as BinaryExpression;
+                    return {
+                        type: "BinaryExpression",
+                        operator: rightBin.operator,
+                        left: simplify(leftPart),
+                        right: simplify(rightPart)
+                    } as BinaryExpression;
+                }
+            }
+            // Pattern: (expr + expr2) * num = expr*num + expr2*num
+            if (right.type === "NumberLiteral" && left.type === "BinaryExpression") {
+                const leftBin = left as BinaryExpression;
+                if (leftBin.operator === "+" || leftBin.operator === "-") {
+                    const leftPart = {
+                        type: "BinaryExpression",
+                        operator: "*",
+                        left: leftBin.left,
+                        right: right
+                    } as BinaryExpression;
+                    const rightPart = {
+                        type: "BinaryExpression",
+                        operator: "*",
+                        left: leftBin.right,
+                        right: right
+                    } as BinaryExpression;
+                    return {
+                        type: "BinaryExpression",
+                        operator: leftBin.operator,
+                        left: simplify(leftPart),
+                        right: simplify(rightPart)
+                    } as BinaryExpression;
+                }
+            }
+        }
+
+        // Handle distribution law for division: (a + b) / c = a/c + b/c and (a - b) / c = a/c - b/c
+        if (binExpr.operator === "/" && left.type === "BinaryExpression") {
+            const leftBin = left as BinaryExpression;
+            if (leftBin.operator === "+" || leftBin.operator === "-") {
+                const leftPart = {
+                    type: "BinaryExpression",
+                    operator: "/",
+                    left: leftBin.left,
+                    right: right
+                } as BinaryExpression;
+                const rightPart = {
+                    type: "BinaryExpression",
+                    operator: "/",
+                    left: leftBin.right,
+                    right: right
+                } as BinaryExpression;
+                return {
+                    type: "BinaryExpression",
+                    operator: leftBin.operator,
+                    left: simplify(leftPart),
+                    right: simplify(rightPart)
+                } as BinaryExpression;
+            }
+        }
+
         return {
             type: "BinaryExpression",
             operator: binExpr.operator,
