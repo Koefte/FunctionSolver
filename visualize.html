@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Equation Solver - Tree Visualization</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1e1e1e;
+            color: #e0e0e0;
+            overflow: hidden;
+        }
+
+        #container {
+            display: flex;
+            height: 100vh;
+        }
+
+        #sidebar {
+            width: 450px;
+            background-color: #252526;
+            padding: 20px;
+            overflow-y: auto;
+            border-right: 1px solid #3e3e42;
+            flex-shrink: 0;
+            box-sizing: border-box;
+        }
+
+        #sidebar h2 {
+            margin-bottom: 15px;
+            font-size: 16px;
+            color: #4ec9b0;
+        }
+
+        #sidebar input {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            background-color: #3c3c3c;
+            border: 1px solid #555;
+            color: #e0e0e0;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        #sidebar button {
+            width: 100%;
+            padding: 10px;
+            background-color: #0e639c;
+            border: none;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-bottom: 20px;
+            box-sizing: border-box;
+        }
+
+        #sidebar button:hover {
+            background-color: #1177bb;
+        }
+
+        #info {
+            background-color: #1e1e1e;
+            padding: 10px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        #info p {
+            margin: 5px 0;
+        }
+
+        #treeInfo {
+            background-color: #1e1e1e;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        #treeInfo div {
+            margin: 3px 0;
+            padding: 5px;
+            background-color: #2d2d2d;
+            border-left: 2px solid #0e639c;
+            border-radius: 2px;
+        }
+
+        #canvas {
+            flex: 1;
+            background-color: #1e1e1e;
+            cursor: grab;
+        }
+
+        #canvas:active {
+            cursor: grabbing;
+        }
+
+        #status {
+            position: absolute;
+            bottom: 10px;
+            left: 460px;
+            background-color: #252526;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        #tooltip {
+            position: absolute;
+            background-color: #333;
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: bold;
+            font-family: monospace;
+            pointer-events: none;
+            border: 1px solid #4ec9b0;
+            max-width: 400px;
+            word-wrap: break-word;
+            z-index: 1000;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="sidebar">
+            <h2>Equation Solver</h2>
+            <div id="info">
+                <p><strong>Example:</strong></p>
+                <p>2*x + 3 = 7 + x</p>
+            </div>
+            <input type="text" id="equationInput" placeholder="Enter equation..." value="2*x + 3 = 7 + x">
+            <button id="solveBtn">Solve & Visualize</button>
+            
+            <h2>Information</h2>
+            <div id="treeInfo">
+                <p>Waiting for input...</p>
+            </div>
+        </div>
+        <canvas id="canvas"></canvas>
+    </div>
+    <div id="status">Ready</div>
+    <div id="tooltip"></div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const equationInput = document.getElementById('equationInput');
+        const solveBtn = document.getElementById('solveBtn');
+        const treeInfo = document.getElementById('treeInfo');
+        const status = document.getElementById('status');
+        const tooltip = document.getElementById('tooltip');
+
+        // Set canvas size with high DPI support
+        function resizeCanvas() {
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            canvas.style.width = rect.width + 'px';
+            canvas.style.height = rect.height + 'px';
+            ctx.scale(dpr, dpr);
+        }
+        resizeCanvas();
+        window.addEventListener('resize', () => {
+            resizeCanvas();
+            draw();
+        });
+
+        // Pan and zoom
+        let pan = { x: 0, y: 0 };
+        let zoom = 1;
+
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const zoomSpeed = 0.1;
+            const mouseX = e.clientX - 300;
+            const mouseY = e.clientY;
+            
+            if (e.deltaY < 0) zoom += zoomSpeed;
+            else zoom = Math.max(0.1, zoom - zoomSpeed);
+            
+            draw();
+        });
+
+        let isPanning = false;
+        let panStart = { x: 0, y: 0 };
+
+        canvas.addEventListener('mousedown', (e) => {
+            isPanning = true;
+            panStart = { x: e.clientX, y: e.clientY };
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (isPanning) {
+                pan.x += e.clientX - panStart.x;
+                pan.y += e.clientY - panStart.y;
+                panStart = { x: e.clientX, y: e.clientY };
+                draw();
+            }
+            
+            // Check for node hover
+            const rect = canvas.getBoundingClientRect();
+            const displayX = e.clientX - rect.left;
+            const displayY = e.clientY - rect.top;
+            
+            if (treeData) {
+                const hoveredNode = findNodeAtPosition(displayX, displayY);
+                if (hoveredNode) {
+                    tooltip.textContent = hoveredNode.expr;
+                    tooltip.style.display = 'block';
+                    tooltip.style.left = (e.clientX + 10) + 'px';
+                    tooltip.style.top = (e.clientY + 10) + 'px';
+                    canvas.style.cursor = 'pointer';
+                } else {
+                    tooltip.style.display = 'none';
+                    canvas.style.cursor = 'grab';
+                }
+            }
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            isPanning = false;
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+            tooltip.style.display = 'none';
+        });
+
+        let treeData = null;
+        let nodePositions = [];
+
+        function findNodeAtPosition(displayX, displayY) {
+            // Check all stored node positions
+            let closest = null;
+            let closestDist = Infinity;
+            
+            for (let nodePos of nodePositions) {
+                const dist = Math.sqrt((displayX - nodePos.screenX) ** 2 + (displayY - nodePos.screenY) ** 2);
+                if (dist < closestDist) {
+                    closestDist = dist;
+                    closest = nodePos;
+                }
+            }
+            
+            if (closest && closestDist <= closest.radius) {
+                console.log(`Hover: expr="${closest.node.expr}", dist=${closestDist.toFixed(1)}, radius=${closest.radius.toFixed(1)}`);
+                return closest.node;
+            }
+            return null;
+        }
+
+        function drawTree(node, x, y, offsetX, depth = 0) {
+            if (!node) return;
+
+            const nodeRadius = 30;
+            const levelHeight = 100;
+            const childSpacing = 200;
+            const displayWidth = canvas.width / (window.devicePixelRatio || 1);
+
+            // Store node position for hover detection (in display pixels)
+            // screenX = pan.x + displayWidth/2 + x*zoom
+            // screenY = pan.y + 50 + y*zoom
+            const screenX = pan.x + displayWidth / 2 + x * zoom;
+            const screenY = pan.y + 50 + y * zoom;
+            
+            nodePositions.push({
+                node: node,
+                screenX: screenX,
+                screenY: screenY,
+                radius: nodeRadius * zoom
+            });
+
+            // Draw node circle
+            ctx.beginPath();
+            ctx.arc(x, y, nodeRadius, 0, Math.PI * 2);
+            ctx.fillStyle = depth === 0 ? '#4ec9b0' : (node.isSolution ? '#6a9955' : '#d4d4d4');
+            ctx.fill();
+            ctx.strokeStyle = '#e0e0e0';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Draw text
+            ctx.fillStyle = '#1e1e1e';
+            ctx.font = 'bold 11px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // Truncate long expressions
+            const text = node.expr.substring(0, 12);
+            ctx.fillText(text, x, y);
+
+            // Draw children
+            if (node.children && node.children.length > 0) {
+                const totalWidth = (node.children.length - 1) * childSpacing;
+                const startX = x - totalWidth / 2;
+
+                node.children.forEach((child, i) => {
+                    const childX = startX + i * childSpacing;
+                    const childY = y + levelHeight;
+
+                    // Draw connecting line
+                    ctx.strokeStyle = '#666';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(x, y + nodeRadius);
+                    ctx.lineTo(childX, childY - nodeRadius);
+                    ctx.stroke();
+
+                    drawTree(child, childX, childY, offsetX, depth + 1);
+                });
+            }
+        }
+
+        function draw() {
+            const dpr = window.devicePixelRatio || 1;
+            const displayWidth = canvas.width / dpr;
+            const displayHeight = canvas.height / dpr;
+            
+            // Clear stored node positions
+            nodePositions = [];
+            
+            ctx.fillStyle = '#1e1e1e';
+            ctx.fillRect(0, 0, displayWidth, displayHeight);
+
+            ctx.save();
+            ctx.translate(pan.x + displayWidth / 2, pan.y + 50);
+            ctx.scale(zoom, zoom);
+
+            if (treeData) {
+                drawTree(treeData, 0, 0, 0);
+            } else {
+                ctx.fillStyle = '#666';
+                ctx.font = '16px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('No tree data loaded', -pan.x / zoom, -pan.y / zoom);
+            }
+
+            ctx.restore();
+        }
+
+        solveBtn.addEventListener('click', async () => {
+            const equation = equationInput.value.trim();
+            if (!equation) {
+                alert('Please enter an equation');
+                return;
+            }
+
+            status.textContent = 'Processing...';
+            solveBtn.disabled = true;
+
+            try {
+                // Send request to Node.js server with 5 second timeout
+                const response = await fetch('http://localhost:3000/solve', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ equation, timeoutMs: 5000 })
+                });
+
+                if (!response.ok) throw new Error('Server error');
+                
+                const data = await response.json();
+                treeData = data.tree;
+
+                // Update tree info
+                updateTreeInfo(treeData);
+                draw();
+
+                if (data.timedOut) {
+                    status.textContent = `⏱️ Timeout: Could not solve in 5 seconds. Explored ${data.tree?.children?.length || 0} paths.`;
+                } else {
+                    status.textContent = `Found ${data.solutions.length} solution(s) at depth ${data.depth}`;
+                }
+            } catch (err) {
+                status.textContent = `Error: ${err.message}`;
+                console.error(err);
+            }
+
+            solveBtn.disabled = false;
+        });
+
+        function updateTreeInfo(node, depth = 0, html = '') {
+            if (!node) return html;
+
+            const indent = '&nbsp;'.repeat(depth * 2);
+            const isSolution = node.isSolution ? ' ✓' : '';
+            html += `<div>${indent}${node.expr}${isSolution}</div>`;
+
+            if (node.children) {
+                node.children.forEach(child => {
+                    html = updateTreeInfo(child, depth + 1, html);
+                });
+            }
+
+            if (depth === 0) {
+                treeInfo.innerHTML = html;
+            }
+            return html;
+        }
+
+        // Initial draw
+        draw();
+    </script>
+</body>
+</html>
