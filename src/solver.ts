@@ -24,20 +24,33 @@ function treeToVisualizationFormat(node: SolutionTree, timedOut: boolean = false
     };
 }
 
-function simplify(expr: Equation | Expression): Equation | Expression {
+export function simplify(expr: Equation | Expression): Equation | Expression {
+    // Use fixed-point iteration to ensure complete simplification
+    let current = expr;
+    let previous: string;
+    
+    do {
+        previous = exprToString(current);
+        current = simplifyOnce(current);
+    } while (exprToString(current) !== previous);
+    
+    return current;
+}
+
+function simplifyOnce(expr: Equation | Expression): Equation | Expression {
     if (expr.type === "Equation") {
         const eq = expr as Equation;
         return {
             type: "Equation",
-            left: simplify(eq.left),
-            right: simplify(eq.right)
+            left: simplifyOnce(eq.left),
+            right: simplifyOnce(eq.right)
         } as Equation;
     }
 
     if (expr.type === "BinaryExpression") {
         const binExpr = expr as BinaryExpression;
-        const left = simplify(binExpr.left);
-        const right = simplify(binExpr.right);
+        const left = simplifyOnce(binExpr.left);
+        const right = simplifyOnce(binExpr.right);
 
         // Handle constant folding: combine two number literals
         if (left.type === "NumberLiteral" && right.type === "NumberLiteral") {
@@ -185,6 +198,40 @@ function simplify(expr: Equation | Expression): Equation | Expression {
                 return leftBin.left;
             }
 
+            // Pattern: (a + n) - m = a + (n - m) where n and m are numbers
+            if (binExpr.operator === "-" && leftBin.operator === "+" && 
+                leftBin.right.type === "NumberLiteral" && right.type === "NumberLiteral") {
+                const n = (leftBin.right as NumberLiteral).value;
+                const m = (right as NumberLiteral).value;
+                const newConst = n - m;
+                if (newConst === 0) {
+                    return leftBin.left;
+                }
+                return {
+                    type: "BinaryExpression",
+                    operator: newConst > 0 ? "+" : "-",
+                    left: leftBin.left,
+                    right: { type: "NumberLiteral", value: Math.abs(newConst) } as NumberLiteral
+                } as BinaryExpression;
+            }
+
+            // Pattern: (a - n) + m = a + (m - n) where n and m are numbers
+            if (binExpr.operator === "+" && leftBin.operator === "-" && 
+                leftBin.right.type === "NumberLiteral" && right.type === "NumberLiteral") {
+                const n = (leftBin.right as NumberLiteral).value;
+                const m = (right as NumberLiteral).value;
+                const newConst = m - n;
+                if (newConst === 0) {
+                    return leftBin.left;
+                }
+                return {
+                    type: "BinaryExpression",
+                    operator: newConst > 0 ? "+" : "-",
+                    left: leftBin.left,
+                    right: { type: "NumberLiteral", value: Math.abs(newConst) } as NumberLiteral
+                } as BinaryExpression;
+            }
+
             // Handle like terms: (n * var ± m) - var = (n-1) * var ± m
             if (binExpr.operator === "-" && right.type === "Variable") {
                 const rightVar = right as Variable;
@@ -227,6 +274,47 @@ function simplify(expr: Equation | Expression): Equation | Expression {
                     }
                 }
             }
+
+            // Handle like terms: (a * var ± m) - b * var = (a - b) * var ± m
+            if (binExpr.operator === "-" && right.type === "BinaryExpression") {
+                const rightBin = right as BinaryExpression;
+                if (rightBin.operator === "*" && rightBin.left.type === "NumberLiteral" &&
+                    leftBin.operator === "+" && leftBin.left.type === "BinaryExpression") {
+                    const leftLeft = leftBin.left as BinaryExpression;
+                    if (leftLeft.operator === "*" && leftLeft.left.type === "NumberLiteral") {
+                        const leftVar = leftLeft.right;
+                        const rightVar = rightBin.right;
+                        if (leftVar.type === "Variable" && rightVar.type === "Variable" &&
+                            (leftVar as Variable).name === (rightVar as Variable).name) {
+                            const leftCoeff = (leftLeft.left as NumberLiteral).value;
+                            const rightCoeff = (rightBin.left as NumberLiteral).value;
+                            const newCoeff = leftCoeff - rightCoeff;
+                            if (newCoeff === 0) {
+                                return leftBin.right;
+                            } else if (newCoeff === 1) {
+                                return {
+                                    type: "BinaryExpression",
+                                    operator: "+",
+                                    left: leftVar,
+                                    right: leftBin.right
+                                } as BinaryExpression;
+                            } else {
+                                return {
+                                    type: "BinaryExpression",
+                                    operator: "+",
+                                    left: {
+                                        type: "BinaryExpression",
+                                        operator: "*",
+                                        left: { type: "NumberLiteral", value: newCoeff } as NumberLiteral,
+                                        right: leftVar
+                                    } as BinaryExpression,
+                                    right: leftBin.right
+                                } as BinaryExpression;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Handle distribution law: a * (b + c) = a*b + a*c and (b + c) * a = b*a + c*a
@@ -251,8 +339,8 @@ function simplify(expr: Equation | Expression): Equation | Expression {
                     return {
                         type: "BinaryExpression",
                         operator: rightBin.operator,
-                        left: simplify(leftPart),
-                        right: simplify(rightPart)
+                        left: simplifyOnce(leftPart),
+                        right: simplifyOnce(rightPart)
                     } as BinaryExpression;
                 }
             }
@@ -275,8 +363,8 @@ function simplify(expr: Equation | Expression): Equation | Expression {
                     return {
                         type: "BinaryExpression",
                         operator: leftBin.operator,
-                        left: simplify(leftPart),
-                        right: simplify(rightPart)
+                        left: simplifyOnce(leftPart),
+                        right: simplifyOnce(rightPart)
                     } as BinaryExpression;
                 }
             }
@@ -301,8 +389,8 @@ function simplify(expr: Equation | Expression): Equation | Expression {
                 return {
                     type: "BinaryExpression",
                     operator: leftBin.operator,
-                    left: simplify(leftPart),
-                    right: simplify(rightPart)
+                    left: simplifyOnce(leftPart),
+                    right: simplifyOnce(rightPart)
                 } as BinaryExpression;
             }
         }
@@ -419,7 +507,7 @@ export function findSolution(expr: Equation, timeoutMs: number = 5000): { soluti
         // Check if timeout exceeded
         if (Date.now() - startTime > timeoutMs) {
             timedOut = true;
-            console.log(`Timeout: Failed to solve in ${timeoutMs}ms`);
+            console.log(`Timeout: Failed to solve in ${timeoutMs}ms (max depth reached: ${maxDepth})`);
             break;
         }
 
@@ -470,14 +558,16 @@ function onlyNumbers(expr: Expression): boolean{
 }
 
 
-function applyPermutation(expr: Equation, permutation: string): Equation{
+export function applyPermutation(expr: Equation, permutation: string): Equation{
     let newExpr = {
         type: "Equation",
         left: expr.left,
         right: expr.right
     } as Equation;
-    newExpr.left = parse(tokenize(exprToString(expr.left) + permutation));
-    newExpr.right = parse(tokenize(exprToString(expr.right) + permutation));
+    // Add space before permutation to avoid parsing issues (e.g., ")- 3" instead of ")-3")
+    newExpr.left = parse(tokenize("(" + exprToString(expr.left) + ") " + permutation));
+    newExpr.right = parse(tokenize("(" + exprToString(expr.right) + ") " + permutation));
+    //console.log(`Applied permutation ${permutation}: ${exprToString(newExpr)}`);
     return  newExpr;
 }  
         

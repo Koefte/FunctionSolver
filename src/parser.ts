@@ -30,12 +30,49 @@ export interface Equation extends Expression {
 export function exprToString(expr: Expression): string {
     switch(expr.type){
         case "NumberLiteral":
-            return (expr as NumberLiteral).value.toString();
+            const val = (expr as NumberLiteral).value;
+            // Wrap negative numbers in parentheses for safe parsing
+            return val < 0 ? `(${val})` : val.toString();
         case "Variable":
             return (expr as Variable).name;
         case "BinaryExpression":
             let binExpr = expr as BinaryExpression;
-            return `${exprToString(binExpr.left)} ${binExpr.operator} ${exprToString(binExpr.right)}`;
+            let leftStr = exprToString(binExpr.left);
+            let rightStr = exprToString(binExpr.right);
+            
+            // Add parentheses to left operand if it's a lower-precedence operation
+            if (binExpr.left.type === "BinaryExpression") {
+                const leftBin = binExpr.left as BinaryExpression;
+                // Addition/subtraction have lower precedence than multiplication/division
+                if ((leftBin.operator === "+" || leftBin.operator === "-") && 
+                    (binExpr.operator === "*" || binExpr.operator === "/")) {
+                    leftStr = `(${leftStr})`;
+                }
+            }
+            
+            // Add parentheses to right operand if it's a lower-precedence operation
+            // or if it would cause ambiguity with associativity
+            if (binExpr.right.type === "BinaryExpression") {
+                const rightBin = binExpr.right as BinaryExpression;
+                // Addition/subtraction have lower precedence than multiplication/division
+                if ((rightBin.operator === "+" || rightBin.operator === "-") && 
+                    (binExpr.operator === "*" || binExpr.operator === "/")) {
+                    rightStr = `(${rightStr})`;
+                }
+                // Right associativity issues: x - (y - z) is different from x - y - z
+                if (binExpr.operator === "-" && rightBin.operator === "-") {
+                    rightStr = `(${rightStr})`;
+                }
+                if (binExpr.operator === "-" && rightBin.operator === "+") {
+                    rightStr = `(${rightStr})`;
+                }
+                // Right associativity issues for division: x / (y / z) is different from x / y / z
+                if (binExpr.operator === "/" && (rightBin.operator === "/" || rightBin.operator === "*")) {
+                    rightStr = `(${rightStr})`;
+                }
+            }
+            
+            return `${leftStr} ${binExpr.operator} ${rightStr}`;
         case "Equation":
             let eqExpr = expr as Equation;
             return `${exprToString(eqExpr.left)} = ${exprToString(eqExpr.right)}`;
@@ -92,11 +129,11 @@ export function parse(tokens: Token[]): Expression {
     }
 
     function parseMultiplyDivide(): Expression {
-        let left = parsePrimary();
+        let left = parseUnary();
 
         while (peek() && (peek()!.type === TokenType.Multiply || peek()!.type === TokenType.Divide)) {
             const operator = consume();
-            const right = parsePrimary();
+            const right = parseUnary();
             left = {
                 type: "BinaryExpression",
                 operator: operator.value,
@@ -106,6 +143,30 @@ export function parse(tokens: Token[]): Expression {
         }
 
         return left;
+    }
+
+    function parseUnary(): Expression {
+        const token = peek();
+        
+        // Handle unary minus and plus
+        if (token && (token.type === TokenType.Minus || token.type === TokenType.Plus)) {
+            const operator = consume();
+            const operand = parseUnary(); // Allow chaining of unary operators
+            
+            if (operator.type === TokenType.Minus) {
+                // Unary minus: -x becomes (0 - x)
+                return {
+                    type: "BinaryExpression",
+                    operator: "-",
+                    left: { type: "NumberLiteral", value: 0 } as NumberLiteral,
+                    right: operand
+                } as BinaryExpression;
+            }
+            // Unary plus just returns the operand
+            return operand;
+        }
+        
+        return parsePrimary();
     }
 
     function parsePrimary(): Expression {
